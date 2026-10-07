@@ -1,0 +1,336 @@
+// Schéma de base de données - Mon École
+// PostgreSQL + Prisma
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ========================================
+// UTILISATEURS & RÔLES
+// ========================================
+
+enum Role {
+  STUDENT
+  PARENT
+  TEACHER
+  ADMIN
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  role         Role
+  firstName    String
+  lastName     String
+  phone        String?
+  avatarUrl    String?
+  isVerified   Boolean  @default(false)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  studentProfile StudentProfile?
+  teacherProfile TeacherProfile?
+  parentOf       StudentProfile[] @relation("ParentChildren")
+
+  subscriptions  Subscription[]
+  payments       Payment[]
+  notifications  Notification[]
+  submissions    StudentSubmission[]
+  progress       ProgressTracking[]
+  createdLessons Lesson[]            @relation("LessonAuthor")
+
+  @@map("users")
+}
+
+model StudentProfile {
+  id       String  @id @default(uuid())
+  userId   String  @unique
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  levelId  String
+  level    Level   @relation(fields: [levelId], references: [id])
+  parentId String?
+  parent   User?   @relation("ParentChildren", fields: [parentId], references: [id])
+
+  @@map("student_profiles")
+}
+
+model TeacherProfile {
+  id         String   @id @default(uuid())
+  userId     String   @unique
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  bio        String?
+  verified   Boolean  @default(false)
+
+  @@map("teacher_profiles")
+}
+
+// ========================================
+// HIÉRARCHIE PÉDAGOGIQUE
+// ========================================
+
+model EducationCycle {
+  id     String  @id @default(uuid())
+  name   String  // Primaire, Collège, Lycée, Université
+  order  Int
+  levels Level[]
+
+  @@map("education_cycles")
+}
+
+model Level {
+  id      String   @id @default(uuid())
+  cycleId String
+  cycle   EducationCycle @relation(fields: [cycleId], references: [id], onDelete: Cascade)
+  name    String   // CP1, CP2, ..., Terminale D, Licence 1 Info...
+  order   Int
+
+  subjects        Subject[]
+  studentProfiles StudentProfile[]
+
+  @@map("levels")
+}
+
+model Subject {
+  id       String    @id @default(uuid())
+  levelId  String
+  level    Level     @relation(fields: [levelId], references: [id], onDelete: Cascade)
+  name     String    // Mathématiques, Français, Physique-Chimie...
+  iconUrl  String?
+  chapters Chapter[]
+
+  @@map("subjects")
+}
+
+model Chapter {
+  id        String    @id @default(uuid())
+  subjectId String
+  subject   Subject   @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  title     String
+  order     Int
+  lessons   Lesson[]
+
+  @@map("chapters")
+}
+
+enum ContentType {
+  VIDEO
+  PDF
+  TEXT
+}
+
+model Lesson {
+  id          String      @id @default(uuid())
+  chapterId   String
+  chapter     Chapter     @relation(fields: [chapterId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  contentType ContentType
+  contentUrl  String?     // URL vidéo (Cloudflare Stream) ou PDF (S3)
+  textContent String?     // si contentType = TEXT
+  order       Int
+  isFree      Boolean     @default(false) // accès gratuit (freemium) ou réservé aux abonnés
+  authorId    String?
+  author      User?       @relation("LessonAuthor", fields: [authorId], references: [id])
+  createdAt   DateTime    @default(now())
+
+  exercises Exercise[]
+  progress  ProgressTracking[]
+
+  @@map("lessons")
+}
+
+// ========================================
+// EXERCICES & CORRECTIONS
+// ========================================
+
+enum ExerciseType {
+  QCM
+  OPEN_QUESTION
+  UPLOAD
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+model Exercise {
+  id         String       @id @default(uuid())
+  lessonId   String
+  lesson     Lesson       @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  title      String
+  type       ExerciseType
+  difficulty Difficulty   @default(MEDIUM)
+  isFree     Boolean      @default(false)
+  createdAt  DateTime     @default(now())
+
+  questions   ExerciseQuestion[]
+  correction  Correction?
+  submissions StudentSubmission[]
+
+  @@map("exercises")
+}
+
+enum QuestionType {
+  SINGLE_CHOICE
+  MULTIPLE_CHOICE
+  TEXT
+}
+
+model ExerciseQuestion {
+  id           String       @id @default(uuid())
+  exerciseId   String
+  exercise     Exercise     @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  questionText String
+  type         QuestionType
+  order        Int
+
+  choices QuestionChoice[]
+
+  @@map("exercise_questions")
+}
+
+model QuestionChoice {
+  id         String           @id @default(uuid())
+  questionId String
+  question   ExerciseQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+  text       String
+  isCorrect  Boolean          @default(false)
+
+  @@map("question_choices")
+}
+
+model Correction {
+  id          String      @id @default(uuid())
+  exerciseId  String      @unique
+  exercise    Exercise    @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  contentType ContentType
+  contentUrl  String?
+  textContent String?
+
+  @@map("corrections")
+}
+
+model StudentSubmission {
+  id          String   @id @default(uuid())
+  studentId   String
+  student     User     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  exerciseId  String
+  exercise    Exercise @relation(fields: [exerciseId], references: [id], onDelete: Cascade)
+  answersJson Json     // réponses brutes (choix sélectionnés, texte, url fichier uploadé)
+  score       Float?   // null si correction manuelle en attente
+  submittedAt DateTime @default(now())
+
+  @@map("student_submissions")
+}
+
+// ========================================
+// SUIVI DE PROGRESSION
+// ========================================
+
+enum ProgressStatus {
+  NOT_STARTED
+  IN_PROGRESS
+  COMPLETED
+}
+
+model ProgressTracking {
+  id          String         @id @default(uuid())
+  studentId   String
+  student     User           @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  lessonId    String
+  lesson      Lesson         @relation(fields: [lessonId], references: [id], onDelete: Cascade)
+  status      ProgressStatus @default(NOT_STARTED)
+  completedAt DateTime?
+
+  @@unique([studentId, lessonId])
+  @@map("progress_tracking")
+}
+
+// ========================================
+// ABONNEMENTS & PAIEMENTS (freemium)
+// ========================================
+
+model Plan {
+  id           String   @id @default(uuid())
+  name         String   // Gratuit, Premium Mensuel, Premium Annuel
+  priceXof     Int      // prix en Francs CFA
+  durationDays Int
+  featuresJson Json     // liste des fonctionnalités incluses
+
+  subscriptions Subscription[]
+
+  @@map("plans")
+}
+
+enum SubscriptionStatus {
+  ACTIVE
+  EXPIRED
+  CANCELLED
+}
+
+model Subscription {
+  id        String             @id @default(uuid())
+  userId    String
+  user      User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  planId    String
+  plan      Plan               @relation(fields: [planId], references: [id])
+  status    SubscriptionStatus @default(ACTIVE)
+  startDate DateTime           @default(now())
+  endDate   DateTime
+
+  payments Payment[]
+
+  @@map("subscriptions")
+}
+
+enum PaymentMethod {
+  ORANGE_MONEY
+  MTN_MONEY
+  MOOV_MONEY
+  CARD
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  FAILED
+}
+
+model Payment {
+  id             String        @id @default(uuid())
+  userId         String
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  subscriptionId String?
+  subscription   Subscription? @relation(fields: [subscriptionId], references: [id])
+  amountXof      Int
+  method         PaymentMethod
+  status         PaymentStatus @default(PENDING)
+  transactionRef String        @unique
+  createdAt      DateTime      @default(now())
+
+  @@map("payments")
+}
+
+// ========================================
+// NOTIFICATIONS
+// ========================================
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@map("notifications")
+}

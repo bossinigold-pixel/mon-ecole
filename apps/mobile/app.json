@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "Mon École",
+    "slug": "mon-ecole",
+    "version": "0.0.1",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.monecole.app"
+    },
+    "android": {
+      "package": "com.monecole.app"
+    }
+  }
+}
